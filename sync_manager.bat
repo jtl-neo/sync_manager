@@ -39,6 +39,8 @@ set "CFG_WEBHOOK_TYPE=SLACK"
 set "CFG_NOTIFY_OK=0"
 set "CFG_NOTIFY_FAIL=1"
 set "CFG_NOTIFY_OFFLINE=0"
+set "CFG_COMPRESS=1"
+set "CFG_RAW="
 
 :: ============================================================
 :: Load Config  (放在最前面, 讓 headless 模式也能讀到設定)
@@ -112,6 +114,7 @@ echo    [7]  啟用排程
 echo    [8]  停用排程
 echo    [9]  忽略資料夾
 echo    [W]  Webhook 通知  (Slack/Discord)
+echo    [T]  傳輸加速  (壓縮/排除大型資料夾)
 echo    [0]  離開
 echo.
 echo  ------------------------------------------
@@ -120,7 +123,7 @@ call :check_webhook_status
 echo  ==========================================
 echo.
 set "c="
-set /p "c=  請選擇 [0-9 / W]: "
+set /p "c=  請選擇 [0-9 / W / T]: "
 if "!c!"=="1" goto :opt_conn
 if "!c!"=="2" goto :opt_path
 if "!c!"=="3" goto :opt_sched
@@ -131,6 +134,7 @@ if "!c!"=="7" goto :opt_enable
 if "!c!"=="8" goto :opt_disable
 if "!c!"=="9" goto :opt_ignore
 if /i "!c!"=="W" goto :opt_webhook
+if /i "!c!"=="T" goto :opt_transfer
 if "!c!"=="0" exit /b 0
 goto :menu
 
@@ -392,6 +396,12 @@ if defined CFG_IGNORE (
 ) else (
     echo    忽略資料夾: (無)
 )
+if "!CFG_COMPRESS!"=="1" (
+    echo    壓縮傳輸:   開啟
+) else (
+    echo    壓縮傳輸:   關閉
+)
+if defined CFG_RAW echo    進階參數:   !CFG_RAW!
 echo.
 echo    排程頻率:   每 !CFG_INTERVAL! !CFG_FREQ!
 echo.
@@ -585,6 +595,127 @@ call :save_cfg
 goto :opt_webhook
 
 :: ============================================================
+:: [T] 傳輸加速設定
+:: ============================================================
+:opt_transfer
+cls
+echo.
+echo  --- 傳輸加速設定 ---
+echo.
+if "!CFG_COMPRESS!"=="1" (
+    echo  壓縮 (Compression): 開啟
+) else (
+    echo  壓縮 (Compression): 關閉
+)
+if defined CFG_RAW (
+    echo  進階 raw 參數: !CFG_RAW!
+) else (
+    echo  進階 raw 參數: (無)
+)
+if defined CFG_IGNORE (
+    echo  已排除資料夾: !CFG_IGNORE!
+) else (
+    echo  已排除資料夾: (無)  ^<- 強烈建議排除 node_modules 等
+)
+echo.
+echo  ------------------------------------------
+echo  加速重點 (影響由大到小):
+echo    1. 排除 node_modules/.next/.git 等大型資料夾  ^=^> 選 [3]
+echo    2. 確認 Tailscale 是 direct 而非 relay
+echo       (在命令列跑: tailscale ping !CFG_HOST!)
+echo  ------------------------------------------
+echo.
+echo    [1] 切換壓縮 (文字/程式碼有感, 純媒體檔可關)
+echo    [2] 進階 raw 傳輸參數 (緩衝/管線深度)
+echo    [3] 一鍵排除常見大型資料夾
+echo    [0] 返回主選單
+echo.
+set "v="
+set /p "v=  請選擇 [0-3]: "
+if "!v!"=="1" goto :tr_tog_comp
+if "!v!"=="2" goto :tr_raw
+if "!v!"=="3" goto :tr_ignore_preset
+goto :menu
+
+:tr_tog_comp
+if "!CFG_COMPRESS!"=="1" (set "CFG_COMPRESS=0") else (set "CFG_COMPRESS=1")
+call :save_cfg
+goto :opt_transfer
+
+:tr_ignore_preset
+cls
+echo.
+echo  --- 一鍵排除常見大型資料夾 ---
+echo.
+echo  建議清單:
+echo    node_modules;.next;.git;.turbo;.cache;dist;build;out;coverage;.vercel
+echo.
+if defined CFG_IGNORE echo  目前已有清單: !CFG_IGNORE!
+echo.
+set "v="
+set /p "v=  套用建議清單? (會覆蓋目前清單) (y/n): "
+if /i "!v!"=="y" (
+    set "CFG_IGNORE=node_modules;.next;.git;.turbo;.cache;dist;build;out;coverage;.vercel"
+    call :save_cfg
+    echo.
+    echo  已套用! 下次同步會跳過這些資料夾。
+) else (
+    echo.
+    echo  已取消。
+)
+timeout /t 2 >nul
+goto :opt_transfer
+
+:tr_raw
+cls
+echo.
+echo  --- 進階 raw 傳輸參數 ---
+echo.
+echo  這些會附加到 WinSCP open 的 -rawsettings 後面 (用空白分隔)。
+echo  ^<注意^> 名稱請依你的 WinSCP 版本確認, 設錯會導致連線失敗。
+echo.
+echo  常見可嘗試:
+echo    SendBuf=0             關閉緩衝最佳化, 在某些網路反而更快
+echo    SFTPDownloadQueue=64  加大下載管線深度 (高延遲連線有感)
+echo    SFTPMaxPacketSize=0   封包大小 (0 = 依伺服器決定)
+echo.
+if defined CFG_RAW (
+    echo  目前: !CFG_RAW!
+) else (
+    echo  目前: (無)
+)
+echo.
+echo    [1] 設定 (輸入完整字串)
+echo    [2] 套用建議 (SendBuf=0 SFTPDownloadQueue=64)
+echo    [3] 清空
+echo    [0] 返回
+echo.
+set "v="
+set /p "v=  請選擇 [0-3]: "
+if "!v!"=="1" goto :tr_raw_set
+if "!v!"=="2" goto :tr_raw_preset
+if "!v!"=="3" goto :tr_raw_clear
+goto :opt_transfer
+
+:tr_raw_set
+echo.
+set "v="
+set /p "v=  raw 參數字串 (留空取消): "
+if defined v set "CFG_RAW=!v!"
+call :save_cfg
+goto :tr_raw
+
+:tr_raw_preset
+set "CFG_RAW=SendBuf=0 SFTPDownloadQueue=64"
+call :save_cfg
+goto :tr_raw
+
+:tr_raw_clear
+set "CFG_RAW="
+call :save_cfg
+goto :tr_raw
+
+:: ============================================================
 :: Headless 排程同步入口 (sync_manager.bat /run)
 ::   主機未開機 -> 視為正常情況, 記 log 並 (可選) 通知, 不報錯
 :: ============================================================
@@ -708,6 +839,8 @@ exit /b !WH_E!
     echo NOTIFY_OK=!CFG_NOTIFY_OK!
     echo NOTIFY_FAIL=!CFG_NOTIFY_FAIL!
     echo NOTIFY_OFFLINE=!CFG_NOTIFY_OFFLINE!
+    echo COMPRESS=!CFG_COMPRESS!
+    echo RAW=!CFG_RAW!
 ) > "!CONFIG!"
 exit /b
 
@@ -725,7 +858,7 @@ if defined CFG_IGNORE (
 )
 
 (
-    echo open sftp://!CFG_USER!@!CFG_HOST!:!CFG_PORT!/ -password="!CFG_PASS!" -hostkey=* -timeout=15
+    echo open sftp://!CFG_USER!@!CFG_HOST!:!CFG_PORT!/ -password="!CFG_PASS!" -hostkey=* -timeout=15 -rawsettings Compression=!CFG_COMPRESS! !CFG_RAW!
     if defined EXC (
         echo synchronize local!DEL_OPT! -filemask="|!EXC!" "!CFG_LOCAL!" "!CFG_REMOTE!"
     ) else (
